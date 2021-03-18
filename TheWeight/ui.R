@@ -8,26 +8,30 @@
 #
 
 library(shiny)
+library(tidyverse)
+library(pins)
+library(DT)
+library(shinyWidgets)
+
+conn <- config::get("connectionSettings")
+board_register_rsconnect(server = conn$CONNECT_SERVER, key = conn$CONNECT_API_KEY)
+
 
 # Define UI for application that draws a histogram
 shinyUI(fluidPage(
   
   # Application title
-  titlePanel("Old Faithful Geyser Data"),
+  titlePanel("Fish Finder"),
   
   # Sidebar with a slider input for number of bins 
   sidebarLayout(
     sidebarPanel(
-       sliderInput("bins",
-                   "Number of bins:",
-                   min = 1,
-                   max = 50,
-                   value = 30)
+      pickerInput(inputId = "Year_input", "Select a year", c("loading..."),2017:2019,multiple = TRUE)
     ),
     
     # Show a plot of the generated distribution
     mainPanel(
-       plotOutput("distPlot")
+      dataTableOutput("Fish_table")
     )
   )
 ))

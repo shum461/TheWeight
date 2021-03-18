@@ -8,18 +8,29 @@
 #
 
 library(shiny)
+library(tidyverse)
+library(pins)
+library(DT)
+library(shinyWidgets)
 
 # Define server logic required to draw a histogram
-shinyServer(function(input, output) {
+shinyServer(function(input, output,session) {
+  
+  reactive_fish= pin_reactive("FishTissue_Metals_results", board = "rsconnect") 
+  
+  
+  observe({
    
-  output$distPlot <- renderPlot({
+     fish_years=reactive_fish() %>% select(Year) %>% arrange(desc((Year)))
+     updatePickerInput(session = session, inputId = "Year_input", choices =fish_years, selected = 2019)
+  })
+  
+  
+  output$Fish_table <- renderDataTable({
     
-    # generate bins based on input$bins from ui.R
-    x    <- faithful[, 2] 
-    bins <- seq(min(x), max(x), length.out = input$bins + 1)
-    
-    # draw the histogram with the specified number of bins
-    hist(x, breaks = bins, col = 'darkgray', border = 'white')
+    reactive_fish() %>%
+      filter(.$Year %in% input$Year_input)
+   
     
   })
   
