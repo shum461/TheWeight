@@ -1,0 +1,256 @@
+---
+title: "Estuarine Prob Mon updated 3.19"
+resource_files:
+- config.yml
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(DBI)
+library(tidyverse)
+library(config)
+library(lubridate)
+library(readxl)
+library(janitor)
+library(pool)
+library(pins)
+
+options(scipen = 999)
+
+source("Salinity_regime_funs.R")
+#source("file_load.R")
+
+
+
+
+# --------------Emma connections---------------
+
+# get configuration settings
+conn <- config::get("connectionSettings")
+
+# use API key to register board
+board_register_rsconnect(key = conn$CONNECT_API_KEY,  #Sys.getenv("CONNECT_API_KEY"),
+                          server = conn$CONNECT_SERVER)#Sys.getenv("CONNECT_SERVER"))
+
+pool <- dbPool(
+  drv = odbc::odbc(),
+  Driver = "SQLServer",   # note the LACK OF space between SQL and Server ( how RStudio named driver)
+  # Production Environment
+  Server= "DEQ-SQLODS-PROD,50000",
+  dbname = "ODS",
+  UID = conn$UID_prod,
+  PWD = conn$PWD_prod,
+  #UID = Sys.getenv("userid_production"), # need to change in Connect {vars}
+  #PWD = Sys.getenv("pwd_production")   # need to change in Connect {vars}
+  # Test environment
+  #Server= "WSQ04151,50000",
+  #dbname = "ODS_test",
+  #UID = Sys.getenv("userid"),  # need to change in Connect {vars}
+  #PWD = Sys.getenv("pwd"),  # need to change in Connect {vars}
+  trusted_connection = "yes"
+)
+
+
+# Master list of CEDS Stations IDs and Ches Bay Site Names
+Station_data_2011_2020=pin_get("EstProbMon_Stations_Summary",board="rsconnect")
+
+
+
+# -----------Pull all Estuarine ProbMon CEDS field data from all years and pin to rsconnect server----------------
+
+# Full field data, profile at all depths
+
+ProbMon_Field=pool %>%
+tbl("Wqm_Field_Data_View") %>%
+filter(Fdt_Spg_Code %in% c('C2',"PR")) %>%
+as_tibble()
+
+# pin to rsconnect  
+pin(ProbMon_Field,"EstProbMon_Field_Data",board = "rsconnect")
+
+
+#------------ Pull field data and organize DO, Salinity, Temperature from CEDS-------------------------------
+
+# Filtered field data, deepest depth only
+
+ProbMon_Sal=pin_get("EstProbMon_Field_Data", board = "rsconnect") %>%        
+mutate(Year= year(Fdt_Date_Time)) %>%
+mutate(Fdt_Salinity=ifelse(Fdt_Sta_Id %in% "2-XQW001.18"& Fdt_Do_Optical>0,0.08,Fdt_Salinity))%>%
+#filter(Year %in% Select_Years)%>%      
+drop_na(Fdt_Salinity) %>%
+  left_join(Station_data_2011_2020,
+          by=c("Fdt_Sta_Id"="STATION_ID","Year"="YEAR"))%>%
+mutate(Date=as.Date(ymd_hms(Fdt_Date_Time)))%>%
+group_by(Fdt_Sta_Id,Date) %>% 
+arrange(desc(Fdt_Depth)) %>%           # Arrange salinity measurements by depth deepest to shallowest
+slice(1) %>%                           # grab only the deepest row at which there is a salinity 
+mutate(Bottom_DO=coalesce(Fdt_Do_Probe,Fdt_Do_Optical),
+       DO_Quality=NCCA_DO_fun(Bottom_DO),
+       Salinity_regime=Sal_Regime_fun(Fdt_Salinity))  %>%    # merge DO optical and DO probe if necessary
+dplyr::select(Fdt_Id,Fdt_Sta_Id,CBP_NAME,Fdt_Salinity,Salinity_regime,Bottom_DO,DO_Quality,Fdt_Temp_Celcius,Fdt_Depth,Fdt_Date_Time,Year,Date)
+
+
+
+
+#------------------------------ Analytes -------------------------------------------------------------------------
+
+
+# Station ID and Field Data IDs that will be used to join analytes with field data
+ProbMon_Fdt_Ids= pin_get("EstProbMon_Field_Data", board = "rsconnect") %>%  
+dplyr::select(Fdt_Id,Fdt_Sta_Id,Fdt_Date_Time)
+
+
+
+# To join analytes with field data you need the Fdt_ID i.e. Ana_Sam_Fdt_Id =Fdt_Id
+DCLS_Analytes= pool %>% tbl("Wqm_Analytes_View") %>%
+filter(Ana_Sam_Fdt_Id %in% !!ProbMon_Fdt_Ids$Fdt_Id) %>%
+as_tibble()%>%
+left_join(ProbMon_Fdt_Ids,by=c("Ana_Sam_Fdt_Id"="Fdt_Id"))%>%
+mutate(Year=year(Ana_Received_Date))
+
+
+Nutrients_Sand_TOC= DCLS_Analytes_fun_Sam_Num(DCLS_Analytes) %>%
+left_join(ProbMon_Sal,by=c("Fdt_Sta_Id","Date")) %>%
+#mutate(Ana_Sam_Mrs_Container_Id_Desc=case_when(
+#CBP_NAME=="NCA20_VA-10001" & Fdt_Salinity==23.29 ~"V1",
+#CBP_NAME=="NCA20_VA-10001" & Fdt_Salinity==23.63 ~"V2",
+#TRUE~Ana_Sam_Mrs_Container_Id_Desc))%>%
+dplyr::select(Fdt_Sta_Id,CBP_NAME,Year,everything()) %>% 
+arrange(desc(Year))%>% 
+filter(!(CBP_NAME=="VA19-0050A" & Ana_Sam_Mrs_Container_Id_Desc %in% "R")) %>%
+filter(!(CBP_NAME=="VA19-0035A" & Ana_Sam_Mrs_Container_Id_Desc %in% c("S1","S2")))
+
+pin(Nutrients_Sand_TOC,"EstProbMon_DCLS_Params",board = "rsconnect")
+
+
+
+#----------------------------    GIS ---------------------------------------------------------------------------
+
+## Check coordinates in Stations_data_2011_2020 against WQM_Sta_GIS_View table in CEDS
+## 
+
+
+
+emma_stations=pin_get("ejones/WQM-Station-Full",board="rsconnect") %>%
+filter(WQM_YRS_SPG_CODE %in% c("C2","PR"))%>%
+left_join(Station_data_2011_2020,by=c("WQM_STA_ID"="STATION_ID"))%>%
+distinct(YEAR,WQM_STA_ID,.keep_all = T) %>%
+dplyr::select(WQM_STA_ID,CBP_NAME,YEAR,everything())%>%
+arrange(desc(YEAR))
+
+
+pin(emma_stations,"EstProbMon_Stations",board = "rsconnect")
+
+
+
+#========================== Fish Tissue====================
+
+#=======================================================================
+#=======================================================================
+
+# Fish results just have Parm code, needed to join to Wqm_Storet_Parm_Cds_Codes_Wqm_View table
+# to get the names 
+
+metals_sv=pin_get("FishTissue_Metals_SV",board="rsconnect")
+#------------------------------------------------------------------
+Fish_Fields=pool %>% 
+tbl("Wqm_Tissue_Sediment_Fields_View") %>%
+as_tibble()
+
+pin(Fish_Fields,"FishTissue_Field_data",board="rsconnect")
+#----------------------------------------------------------------------------
+Spc_Parameter_Code=pool %>%
+tbl("Wqm_Storet_Parm_Cds_Codes_Wqm_View") %>%
+as_tibble()
+
+pin(Spc_Parameter_Code,"WQM-Spc_Parameter_Codes",board="rsconnect",description="Parameter Codes and descriptions")
+#----------------------------------
+#-------------------------------
+
+# metals in fish tissue 
+
+Fish_Results=pool %>% 
+tbl("Wqm_Tissue_Sediment_Results_View") %>%
+as_tibble()%>% 
+left_join(Spc_Parameter_Code,
+          by=c("Tsr_Pg_Spc_Parameter_Code"="Spc_Parameter_Code")) %>%
+mutate(Tsr_Fss_Fsf_Id=as.numeric(Tsr_Fss_Fsf_Id))%>%
+left_join(Fish_Fields,by=c("Tsr_Fss_Fsf_Id"="Fsf_Id"))%>%
+left_join(metals_sv,by=c("Wqm_Char_Name"="Metal"))
+
+#------------------------------------------------------------------
+Fish_Samples=pool %>% 
+tbl("Wqm_Tissue_Sediment_Samples_View")%>%
+as_tibble()
+
+# Adding full fish names from Species_cds to Wqm_Predator_Species_View
+Fish_Species_cds=pool %>% 
+tbl("Wqm_Species_Cds_Codes_Wqm_View")%>%
+as_tibble() %>%
+select(Spe_Code_Num,Spe_Common_Name)
+
+Fish_Predator=pool %>% 
+tbl("Wqm_Predator_Species_View")%>%
+as_tibble()%>%
+left_join(Fish_Species_cds,by=c("Psp_Spe_Code_Num"="Spe_Code_Num"))
+#-----------------------------------------------------------------------
+
+Fish_Species=pool %>% 
+tbl("Wqm_Species_Details_View")%>%
+filter(Spd_Psp_Fsf_Id %in% !!Fish_Results$Tsr_Fss_Fsf_Id)%>%
+as_tibble()%>%
+distinct(Spd_Psp_Id,Spd_Psp_Fsf_Id,.keep_all = T)
+
+pin(Fish_Species,"FishTissue_Species",board="rsconnect",description=" joined with Wqm_Species_Cds_Codes_Wqm_View by Spd_Psp_Spe_Id=Spe_Code_Num")
+
+
+Fish_GIS=pool %>% 
+tbl("WQM_Sta_GIS_View")%>%
+filter(Station_Id %in% !!Fish_Results$Fsf_Sta_Id) %>%
+as_tibble() %>% 
+select(Station_Id,Latitude,Longitude,Huc6_Vahu6,Subbasin,Deq_Region)
+
+#--------------------------------------------------------------------
+# join filtered species to results what number fish sp_Id and what batch sf_Id
+Fish_Results2=Fish_Results %>%
+#distinct(Tsr_Fss_Psp_Id,Tsr_Fss_Fsf_Id,.keep_all = T)%>%
+left_join(Fish_Predator,c("Tsr_Fss_Fsf_Id"="Psp_Fsf_Id","Tsr_Fss_Psp_Id"="Psp_Id")) %>%
+left_join(Fish_GIS,by=c("Fsf_Sta_Id"="Station_Id")) %>%
+dplyr::select(Fsf_Sta_Id,Fsf_Coll_Datetime,Ssc_Description,Tsr_Id,Spe_Common_Name,Avg_Spd_Species_Length,Avg_Spd_Species_Weight,Wqm_Char_Name,Tsr_Value,Tsr_Mdl,Tsr_Qa_Flag,Tsr_Pg_Spc_Parameter_Code,
+DEQ_New_SV,DEQ_Old_SV,VDH_SV,Abv,Latitude,Longitude,Huc6_Vahu6,Subbasin,Deq_Region) %>%
+mutate(Year=lubridate::year(Fsf_Coll_Datetime))%>%
+mutate(DEQ_Old=ifelse(Tsr_Value>DEQ_Old_SV,"YES","NO"),
+DEQ_New=ifelse(Tsr_Value>DEQ_New_SV,"YES","NO"),
+VDH=ifelse(Tsr_Value>VDH_SV,"YES","NO"))
+  
+#left_join(Fish_Species,by=c("Tsr_Fss_Fsf_Id"="Spd_Psp_Fsf_Id","Tsr_Fss_Psp_Id"="Spd_Psp_Id")) %>%
+
+pin(Fish_Results2,"FishTissue_Metals_results",board="rsconnect") 
+
+
+# Stations=pool %>% tbl("Wqm_Stations_View")%>
+# filter(Sta_Id %in% !!Nutrients_Sand_TOC$Fdt_Sta_Id) %>%
+# as_tibble()%>%
+# mutate(Latitude=Sta_Lat_Deg + (Sta_Lat_Min/60) + (Sta_Lat_Sec/3600),
+#       Longitude=Sta_Long_Deg + (Sta_Long_Min/60) + (Sta_Long_Sec/3600))%>%
+# dplyr::select(Sta_Id,Sta_Desc,Sta_Rec_Code,Sta_Wsh_Code,Sta_Comment,Latitude,Longitude)
+
+
+
+# establish db connection on server. Need to enter credentials safely on server after upload
+#con <- DBI::dbConnect(odbc::odbc(),
+#  Driver = "SQLServer",   # note the LACK OF space between SQL and Server ( how RStudio named driver)
+ # Server= "WSQ04151,50000",
+ # Database = "ODS_test",
+  #UID = Sys.getenv("userid"),
+  #PWD = Sys.getenv("pwd") )
+#
+
+#============= Toxicity Testing 2016-2019 =======================
+
+
+
+
+```

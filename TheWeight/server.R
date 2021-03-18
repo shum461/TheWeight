@@ -8,18 +8,30 @@
 #
 
 library(shiny)
+library(tidyverse)
+library(pins)
+library(DT)
+library(shinyWidgets)
 
 # Define server logic required to draw a histogram
-shinyServer(function(input, output) {
+shinyServer(function(input, output,session) {
+  
+  reactive_chem= pin_reactive("EstProbMon_Sed_Chem_2015_2019_WOE", board = "rsconnect") 
+  
+  observe({
    
-  output$distPlot <- renderPlot({
+  
+     updatePickerInput(session = session, inputId = "Year_input", 
+                       choices =sort(unique(as.character(reactive_chem()$YEAR))), selected = 2019)
+  })
+  
+  
+  output$sed_table <- renderDataTable({
     
-    # generate bins based on input$bins from ui.R
-    x    <- faithful[, 2] 
-    bins <- seq(min(x), max(x), length.out = input$bins + 1)
-    
-    # draw the histogram with the specified number of bins
-    hist(x, breaks = bins, col = 'darkgray', border = 'white')
+    reactive_chem() %>%
+      filter(.$YEAR %in% input$Year_input) %>%
+      select_if(negate(is.list))
+   
     
   })
   

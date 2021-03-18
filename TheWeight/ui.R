@@ -8,26 +8,32 @@
 #
 
 library(shiny)
+library(tidyverse)
+library(pins)
+library(DT)
+library(shinyWidgets)
+
+conn <- config::get("connectionSettings")
+board_register_rsconnect(server = conn$CONNECT_SERVER, key = conn$CONNECT_API_KEY)
+
+
 
 # Define UI for application that draws a histogram
-shinyUI(fluidPage(
+navbarPage("The Weight",
+           tabPanel("Plot",
+                    sidebarLayout(
+                      sidebarPanel(
+                        pickerInput(inputId = "Year_input", "Select a year", choices = 2015:2019,
+                                    multiple = TRUE)
+                        ),#sidebar panel
+                       mainPanel(
+      dataTableOutput("sed_table")
+                      ) #main panel
+                    )
+           ),
+tabPanel("Summary",
+                verbatimTextOutput("summary")
   
-  # Application title
-  titlePanel("Old Faithful Geyser Data"),
-  
-  # Sidebar with a slider input for number of bins 
-  sidebarLayout(
-    sidebarPanel(
-       sliderInput("bins",
-                   "Number of bins:",
-                   min = 1,
-                   max = 50,
-                   value = 30)
-    ),
-    
-    # Show a plot of the generated distribution
-    mainPanel(
-       plotOutput("distPlot")
-    )
+    )#tab panel
   )
-))
+
