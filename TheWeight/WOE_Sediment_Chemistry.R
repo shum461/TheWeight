@@ -41,29 +41,37 @@ options(scipen = 999)
 # 2-JMS015.70 VA16-016A 2016 No WOE No TOC or water chems
 
 #=====================load pins from rsconnect===============================
-Sed_Chem=pin_get("EstProbMon_Sed_Chem_2015_2019",board="rsconnect") %>% 
-mutate(CBP_NAME=(ifelse(CBP_NAME %in% "VA15-0023D","VA15-0023C",CBP_NAME)))%>%
-mutate(Fdt_Sta_Id=ifelse(CBP_NAME %in% "VA15-0023C","2CNAN010.17",Fdt_Sta_Id))%>% 
-filter(YEAR %in% 2015)%>%
-select(Fdt_Sta_Id,CBP_NAME,YEAR,Ana_Sam_Mrs_Container_Id_Desc)
+Sed_Chem=pin_get("EstProbMon_Sed_Chem_2015_2019",board="rsconnect") %>%
+mutate(CBP_NAME=(ifelse(CBP_NAME %in% "PRESS-Alt4","PRESS-4",CBP_NAME)))
+
+
+# mutate(YEAR=ifelse(str_detect(CBP_NAME,"VA17")==T,2017,year(DATE_COLLECT)))%>%
+# mutate(CBP_NAME=(ifelse(CBP_NAME %in% "VA15-0023D","VA15-0023C",CBP_NAME)))%>%
+# mutate(Fdt_Sta_Id=ifelse(CBP_NAME %in% "VA15-0023C","2CNAN010.17",Fdt_Sta_Id))%>%
+#  %>%
+# mutate(Fdt_Sta_Id=ifelse(CBP_NAME %in% "VA17-0021A","1AWES001.28",Fdt_Sta_Id))
+#        
+# %>% 
+# filter(YEAR %in% 2015)%>%
+# select(Fdt_Sta_Id,CBP_NAME,YEAR,Ana_Sam_Mrs_Container_Id_Desc)
 
 #--------------------------------DCLS params---------------------------------------------
 #QA_2019=c("VA19-0036B","VA19-0025A","VA19-0050A","VA19-0041A","VA19-0013A")
 #QA_2018=c("VA18-0041A","VA18-0038A","VA18-0037A","VA18-0033A","VA18-0015A")
 
-VA180038=pin_get("EstProbMon_VA180038",board="rsconnect")%>%
-mutate(TOC=ifelse(Fdt_Sta_Id %in% "8-PMK034.37" & Ana_Sam_Mrs_Container_Id_Desc %in% "S2",26.1,TOC),
-Percent_Sand=ifelse(Fdt_Sta_Id %in% "8-PMK034.37" & Ana_Sam_Mrs_Container_Id_Desc %in% "S2",57.7,Percent_Sand))
 
 
 DCLS_params=pin_get("EstProbMon_DCLS_Params",board="rsconnect") %>%
-mutate(Drops=
-case_when(CBP_NAME %in% c("VA19-0035A","NCA20_VA-10010") & Ana_Sam_Mrs_Container_Id_Desc %in% c("S1","S2") ~ "Drop",
-CBP_NAME %in% "VA14-021A" & Fdt_Id %in% 2720299 ~ "Drop",
-CBP_NAME %in% c("VA18-0041A","VA18-0038A")~"Drop")) %>%
-filter(is.na(Drops))%>%
-bind_rows(VA180038) %>%
-mutate(CBP_NAME=ifelse(Fdt_Id %in% 2830255,"PRESS-1",CBP_NAME))
+mutate(YEAR=as.character(lubridate::year(Date)))%>%
+mutate(CBP_NAME =ifelse(CBP_NAME %in% "VA17-0048B","PRESS-1",CBP_NAME))
+
+# mutate(Ana_Sam_Mrs_Container_Id_Desc=
+#          case_when(CBP_NAME %in% "VA15-1499" & Date %in% "2015-07-01" ~"S1",
+#                    
+# 2015
+# R
+# 2015-07-01
+
 
 
 
@@ -87,11 +95,11 @@ Global_values = read_csv("TheWeight/App_lookup_Tables/Global_values.csv")
 #============================================================================
 
 over_the_limit=function(x){
-  case_when(x>=1~"Exceedance",TRUE~NA_character_)}
+case_when(x>=1~"Exceedance",TRUE~NA_character_)}
 
 
 #====== Clean names, join chemicals to lookup table screening values =========
-Sed_Chem_2015=Sed_Chem %>% #filter(.$YEAR %in% 2015)%>%
+Sed_Chem_All=Sed_Chem %>% 
 class_fun(CAS=CAS_NO,Result=RESULT,Analyte=PARAMETER,Units = UNIT)%>%
 left_join(PAHs_CAS,by=c("PARAMETER"="PAH"))%>%
 Full(.)%>%
@@ -99,16 +107,7 @@ mutate_at(vars(ERM_Q,ERM_PEC_min_Q,PEC_Q,PEL_Q,ERL_Q),list(Over=over_the_limit))
 group_by(CBP_NAME,Ana_Sam_Mrs_Container_Id_Desc,YEAR)%>%
 nest()%>%
 left_join(DCLS_params,
-          by=c("CBP_NAME","Ana_Sam_Mrs_Container_Id_Desc"))%>%
-mutate(Salinity_regime=
-           case_when(
-             str_detect(CBP_NAME,"PRESS")~"TF",
-
-             str_detect(CBP_NAME,"VA15-0023D")~"HM", 
-
-             str_detect(CBP_NAME,"VA15-0023D")~"HM",
-
-             TRUE~Salinity_regime))%>%
+          by=c("CBP_NAME","Ana_Sam_Mrs_Container_Id_Desc"="Fixed_Container_Id_Desc","YEAR"))%>%
 mutate(
 Global_SMH=map(data,~summarise_at(.x,vars(ERM_Q,ERM_PEC_min_Q,PEC_Q,PEL_Q,ERL_Q), 
                                            list(~mean(.,na.rm=T), ~max(.,na.rm=T)))%>% 
@@ -144,10 +143,14 @@ mutate(LRM_Prob=map(LRM,~ifelse(.x==0,0,0.11+(0.33*.x)+(0.4*.x^2))),
   ESB_score_fun(ESB_50th)%>%
   mutate(Sed_Chem_WOE=max(Quotient_score,LRM_score,ESB_score))
 
-pin(Sed_Chem_2015,"EstProbMon_Sed_Chem_2015_2019_WOE",board="rsconnect")
+#---------------------------------------------------------------------------------------------------------------
+
+pin(Sed_Chem_All,"EstProbMon_Sed_Chem_2015_2019_WOE",board="rsconnect")
+
+#---------------------------------------------------------------------------------------------------------------
 
 Elizabeth_19= Sed_Chem_all %>% 
-  filter(CBP_NAME %in% c("VA1920-0019A","VA19-0020A","VA19-0048A"))
+filter(CBP_NAME %in% c("VA1920-0019A","VA19-0020A","VA19-0048A"))
 
 
   #VA19044B=Sed_Chem_all %>% filter(CBP_NAME %in% "VA19-0044B") %>%
@@ -360,7 +363,7 @@ Full= function(x){
    # left_join(PAHs_CAS,by=c("Analyte"="PAH","CAS")) 
   
 Totals=x %>%
-    group_by(CBP_NAME,Ana_Sam_Mrs_Container_Id_Desc,YEAR)%>%
+    group_by(CBP_NAME,Ana_Sam_Mrs_Container_Id_Desc,YEAR,DATE_COLLECT)%>%
     summarise(Total_LMW_PAHs = sum(Result_SMH[which(Class=="PAH" & TYPE=="LMW")]),
               Total_HMW_PAHs=sum(Result_SMH[which(Class=="PAH" & TYPE=="HMW")]),
               Total_PAHs=Total_LMW_PAHs+Total_HMW_PAHs,

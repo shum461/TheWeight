@@ -186,30 +186,56 @@ Ecoli_fun=function(x){
 # Times can be off in CEDS so strip the time and group by d/m/y
 # Date=as.Date(ymd_hms(Fdt_Date_Time))
 
-DCLS_Analytes_fun_Sam_Num=function(x){
-  
- S2s=c("E180704414","E180704421","E180704422","E180704423","E180704424", "E180704425","E180704426","E180704420",
-       "E180701613","E180701619","E1807016120","E180701621","E180701622","E180701623","E180701624","E180701625","E180701620")
+
+ # ---------------------------------------Chopped out=---------------------------------------------------------------------------------
+# DCLS_Analytes_fun_Sam_Num=function(x){
+#   
+#  S2s=c("E180704414","E180704421","E180704422","E180704423","E180704424", "E180704425","E180704426","E180704420",
+#        "E180701613","E180701619","E1807016120","E180701621","E180701622","E180701623","E180701624","E180701625","E180701620")
+#  
+#  S1s=c("E180704413","E180704415","E180704416","E180704417","E180704418","E180704413","E180704419",
+#        "E180701612", "E180701614", "E180701615", "E180701616", "E180701617", "E180701618", "E180701619")
+# 
+#  Summarized_Analytes= x %>% 
+#   filter(Ana_Sam_Mrs_Container_Id_Desc %in% c("S1","S2","R")) %>% # get rid of blanks
+#   
+#   mutate(Ana_Sam_Mrs_Container_Id_Desc=
+#            case_when(Ana_Sam_Lab_Num %in% S1s  ~"S1",
+#                      Ana_Sam_Lab_Num %in% S2s  ~"S2",
+#                      
+#                      TRUE ~ Ana_Sam_Mrs_Container_Id_Desc)) %>%
+#   
+# mutate(Date=as.Date(ymd_hms(Fdt_Date_Time)))%>%
+# mutate(Date=
+#          case_when(Fdt_Sta_Id %in% "1AQUA000.85" & Year %in% 2017 ~ ymd("2017-07-17"),
+#                    Fdt_Sta_Id %in% "7-CHI000.27" & Year %in% 2018 ~ ymd("2018-08-06"),
+#                   TRUE~ Date))%>% # PRESS-1 and VA17-0048B are the same
+
+#--------------------------------------------------------------------------------------------------------------------------   
+DCLS_Analytes_fun_Sam_Num=function(x){   
  
- S1s=c("E180704413","E180704415","E180704416","E180704417","E180704418","E180704413","E180704419",
-       "E180701612", "E180701614", "E180701615", "E180701616", "E180701617", "E180701618", "E180701619")
-
- Summarized_Analytes= x %>% 
-  filter(Ana_Sam_Mrs_Container_Id_Desc %in% c("S1","S2","R")) %>% # get rid of blanks
   
-  mutate(Ana_Sam_Mrs_Container_Id_Desc=
-           case_when(Ana_Sam_Lab_Num %in% S1s  ~"S1",
-                     Ana_Sam_Lab_Num %in% S2s  ~"S2",
-                     TRUE ~ Ana_Sam_Mrs_Container_Id_Desc)) %>%
+Summarized_Analytes= x %>% 
+filter(Ana_Sam_Mrs_Container_Id_Desc %in% c("S1","S2","R")) %>%    
+mutate(Date=as.Date(ymd_hms(Fdt_Date_Time))) %>%
+  mutate(Date=
+           case_when(Fdt_Sta_Id %in% "1AQUA000.85" & Year %in% 2017 ~ ymd("2017-07-17"),
+                     Fdt_Sta_Id %in% "7-CHI000.27" & Year %in% 2018 ~ ymd("2018-08-06"),
+                    TRUE~ Date))%>%
   
-mutate(Date=as.Date(ymd_hms(Fdt_Date_Time)))%>%
-mutate(Date=
-         case_when(Fdt_Sta_Id %in% "1AQUA000.85" & Year %in% 2017 ~ ymd("2017-07-17"),
-                   Fdt_Sta_Id %in% "7-CHI000.27" & Year %in% 2018 ~ ymd("2018-08-06"),
-                  TRUE~ Date))%>% # PRESS-1 and VA17-0048B are the same
-
-   
-group_by(Ana_Sam_Mrs_Container_Id_Desc,Fdt_Sta_Id,Date) %>% # one value for each replicate, station id and date_time,Unit
+group_by(Ana_Parameter_Name,Fdt_Sta_Id,Date) %>% 
+mutate(counter= row_number(),
+       no=n_distinct(counter),
+       Fixed_Container_Id_Desc=ifelse(no>1,paste0("S",counter),"R")) %>%
+  mutate(Fixed_Container_Id_Desc=
+  case_when(Fdt_Sta_Id %in% "2CMOC001.95" & Date=="2015-07-01" ~"S1",
+            Fdt_Sta_Id %in% "7BPKS000.40" & Date=="2015-07-09" ~"S1",
+            Fdt_Sta_Id %in% "2CMOC001.95" & Date=="2015-08-17" ~"S2",
+            Fdt_Sta_Id %in% "7BPKS000.40" & Date=="2015-08-25" ~"S2",
+            TRUE ~ Fixed_Container_Id_Desc))%>% 
+            ungroup() %>%                                                                                    
+                                                                            
+group_by(Fixed_Container_Id_Desc,Fdt_Sta_Id,Date) %>% # one value for each replicate, station id and date_time,Unit
        summarise(Total_Nitrogen=sum(Ana_Value[Pg_Storet_Code %in% c("49571","49570")]),
               Total_Phosphorus=sum(Ana_Value[Pg_Storet_Code %in% c("49572","49567")]),
               Dis_Inorg_N=sum(Ana_Value[Pg_Storet_Code %in% c("00618","00613","00608")]),
